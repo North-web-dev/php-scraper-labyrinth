@@ -247,11 +247,24 @@ Counters and flags are stored behind `NorthWebDev\Labyrinth\Store\StoreInterface
 | `FileStore` | Single server | Default. Zero dependencies, concurrency-safe via `flock`. |
 
 > **FileStore requires an explicit, app-owned, private directory** — there is no
-> temp-directory fallback. It creates the directory mode `0700` and refuses to
-> start if the directory already exists but is group/world-accessible or not
-> owned by the current user, and it refuses any state file that is a symlink.
-> Keep the directory outside your web root. A world-writable location (e.g.
-> `/tmp`) would let a local user forge the volume-cap counters.
+> temp-directory fallback. On construction it:
+> - canonicalises the path with `realpath()` (resolving any symlink once) and
+>   uses that resolved path for every state file;
+> - creates the directory mode `0700` if missing, and refuses it if it ends up
+>   group/world-accessible or not owned by the current user;
+> - walks the whole parent chain to the filesystem root and refuses any
+>   group/world-writable component unless it is a root-owned sticky directory
+>   (the legitimate `/tmp` pattern), closing the "swap a symlink under a
+>   writable parent" vector;
+> - hashes keys (sha256) into flat filenames, so a key can never traverse out;
+> - refuses a state file that is a symlink.
+>
+> Keep the directory outside your web root. **Residual limitation (stated
+> honestly):** pure PHP has no `O_NOFOLLOW`, so a symlink swapped in the instant
+> between the `is_link()` check and `fopen()` (a TOCTOU race) cannot be fully
+> excluded — which is exactly why the directory must be private `0700` with
+> non-writable parents, leaving no untrusted writer able to plant or swap a
+> symlink in the path.
 
 | `ApcuStore` | Single server | You want in-memory speed and have APCu. Lost on pool restart. |
 | `RedisStore` | **Multiple servers** | Counters must be shared. A per-host store would let a scraper get N× the quota across N app servers. |

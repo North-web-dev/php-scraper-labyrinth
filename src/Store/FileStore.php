@@ -16,11 +16,27 @@ use RuntimeException;
  *
  * SECURITY: you MUST pass an explicit, app-owned, private directory — there is
  * no temp-directory fallback, because a world-writable location (e.g. /tmp)
- * would let any local user forge or tamper with the volume-cap counters. The
- * directory is created mode 0700 if missing; if it already exists it must be
- * owned by the current user and have no group/world permission bits, or
- * construction throws. State files are refused if they are symlinks, so a
- * planted symlink cannot redirect writes outside the store.
+ * would let any local user forge or tamper with the volume-cap counters.
+ *
+ *  - The path is canonicalised once at construction with realpath(); that
+ *    resolved path is used for all state files, so any symlink in the
+ *    configured path is collapsed up front and every file resolves under it.
+ *  - The directory is created mode 0700 if missing; it must end up owned by the
+ *    current user with no group/world permission bits, or construction throws.
+ *  - The whole parent chain up to the filesystem root is checked: no component
+ *    may be group- or world-writable unless it is a root-owned sticky directory
+ *    (e.g. /tmp). This closes the "swap a symlink under a world-writable parent"
+ *    vector.
+ *  - Keys are sha256-hashed into flat filenames, so a key can never traverse
+ *    out of the directory.
+ *  - A state file that is a symlink is refused before opening.
+ *
+ * Residual limitation, stated plainly: pure PHP cannot open a file with
+ * O_NOFOLLOW, so a symlink swapped in between the is_link() check and fopen()
+ * (a TOCTOU race) cannot be fully excluded. That is exactly why the directory
+ * must be private 0700 and its parents non-group/world-writable: with no
+ * untrusted writer able to place or swap a symlink in the path, the race is not
+ * reachable in practice.
  *
  * Suitable for a single server. For a multi-server deployment use
  * {@see RedisStore} so counters are shared; a per-host FileStore would let a
@@ -40,20 +56,26 @@ final class FileStore implements StoreInterface
             }
         }
 
+        // Canonicalise once: resolve any symlink in the configured path to a
+        // real path, and use only that for every state file from here on.
+        $real = realpath($this->directory);
+        if ($real === false) {
+            throw new RuntimeException("FileStore directory could not be resolved: {$this->directory}");
+        }
+        $this->directory = $real;
+
         $this->assertSecureDirectory($this->directory);
     }
 
     /**
-     * Reject an unsafe store directory: a symlink, a non-directory, one with
-     * any group/world permission bit, or one not owned by the current user.
+     * Reject an unsafe store directory: a non-directory, one with any
+     * group/world permission bit, one not owned by the current user, or one
+     * reachable only through a group/world-writable parent.
      */
     private function assertSecureDirectory(string $dir): void
     {
         clearstatcache(true, $dir);
 
-        if (is_link($dir)) {
-            throw new RuntimeException("FileStore directory must not be a symlink: {$dir}");
-        }
         if (!is_dir($dir)) {
             throw new RuntimeException("FileStore path is not a directory: {$dir}");
         }
@@ -72,6 +94,44 @@ final class FileStore implements StoreInterface
             if ($owner !== false && $owner !== posix_getuid()) {
                 throw new RuntimeException("FileStore directory must be owned by the current user: {$dir}");
             }
+        }
+
+        $this->assertSafeParentChain($dir);
+    }
+
+    /**
+     * Walk from the store directory up to the filesystem root. Reject any
+     * component that is group- or world-writable, unless it is a root-owned
+     * sticky directory (the legitimate /tmp pattern). A writable parent would
+     * let an attacker swap the store directory for a symlink.
+     */
+    private function assertSafeParentChain(string $dir): void
+    {
+        $path = dirname($dir);
+
+        while (true) {
+            clearstatcache(true, $path);
+            $perms = fileperms($path);
+            if ($perms === false) {
+                throw new RuntimeException("FileStore cannot stat a parent directory: {$path}");
+            }
+
+            if (($perms & 0o022) !== 0) {
+                $rootOwnedSticky = fileowner($path) === 0 && ($perms & 0o1000) !== 0;
+                if (!$rootOwnedSticky) {
+                    throw new RuntimeException(sprintf(
+                        'FileStore parent directory %s is group/world-writable (0%o) and not a root-owned sticky dir.',
+                        $path,
+                        $perms & 0o7777,
+                    ));
+                }
+            }
+
+            $parent = dirname($path);
+            if ($parent === $path) {
+                break; // reached the filesystem root
+            }
+            $path = $parent;
         }
     }
 

@@ -111,19 +111,48 @@ final class FileStoreTest extends TestCase
         new FileStore($this->dir);
     }
 
-    public function testRejectsSymlinkedDirectory(): void
+    public function testResolvesSymlinkedConfiguredDirectory(): void
     {
+        // A symlink in the configured path is canonicalised via realpath, and
+        // state files are written into the REAL target directory, not via the
+        // link. (The store accepts it because the resolved target is secure.)
         $real = $this->dir . '-real';
         mkdir($real, 0o700, true);
         symlink($real, $this->dir);
 
         try {
-            $this->expectException(\RuntimeException::class);
-            $this->expectExceptionMessageMatches('/symlink/');
-            new FileStore($this->dir);
+            $store = new FileStore($this->dir);
+            $store->increment('k', 5, 60);
+
+            // The state file exists in the real target directory.
+            $files = glob($real . '/lab_*.json') ?: [];
+            self::assertCount(1, $files);
+            self::assertSame(5, $store->get('k'));
         } finally {
+            foreach (glob($real . '/*') ?: [] as $f) {
+                @unlink($f);
+            }
             @unlink($this->dir);
             @rmdir($real);
+        }
+    }
+
+    public function testRejectsGroupWorldWritableParent(): void
+    {
+        // A world-writable, non-sticky parent would allow a symlink swap of the
+        // store directory, so construction must refuse it.
+        $parent = $this->dir . '/open-parent';
+        $inner = $parent . '/store';
+        mkdir($inner, 0o700, true);
+        chmod($parent, 0o777); // world-writable, NOT sticky
+
+        try {
+            $this->expectException(\RuntimeException::class);
+            $this->expectExceptionMessageMatches('/group\/world-writable/');
+            new FileStore($inner);
+        } finally {
+            @rmdir($inner);
+            @rmdir($parent);
         }
     }
 
