@@ -34,9 +34,13 @@ $config = new Config(
 // multi-server deployment so counters are shared.
 //
 // Pass an explicit, app-owned, PRIVATE directory — never a shared/temp path.
-// FileStore creates it mode 0700 and refuses it if it is group/world-accessible
-// or not owned by this user. Keep it OUTSIDE the web root so it is never served.
-$store = new FileStore(__DIR__ . '/../var/labyrinth');
+// It MUST be an absolute, canonical path with no symlinked or "../" components
+// (FileStore rejects anything whose realpath() differs). FileStore creates it
+// mode 0700 and refuses it if it is group/world-accessible, not owned by this
+// user, or reachable through a group/world-writable parent. Keep it OUTSIDE the
+// web root so it is never served. If your deploy serves the app from a
+// symlinked path (e.g. "current" -> "releases/..."), pass the resolved target.
+$store = new FileStore(dirname(__DIR__) . '/var/labyrinth');
 
 $labyrinth = new Labyrinth($config, $store);
 

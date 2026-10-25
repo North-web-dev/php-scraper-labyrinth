@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace NorthWebDev\Labyrinth\Store;
 
+use InvalidArgumentException;
 use RuntimeException;
 
 /**
@@ -18,9 +19,11 @@ use RuntimeException;
  * no temp-directory fallback, because a world-writable location (e.g. /tmp)
  * would let any local user forge or tamper with the volume-cap counters.
  *
- *  - The path is canonicalised once at construction with realpath(); that
- *    resolved path is used for all state files, so any symlink in the
- *    configured path is collapsed up front and every file resolves under it.
+ *  - The configured path must already be absolute and canonical: it is compared
+ *    against its realpath(), and construction throws if they differ. That
+ *    happens if any component is a symlink, or the path is relative or contains
+ *    "." / ".." segments. This rejects a symlinked directory outright instead
+ *    of silently following it, and is the resolved path used for all state files.
  *  - The directory is created mode 0700 if missing; it must end up owned by the
  *    current user with no group/world permission bits, or construction throws.
  *  - The whole parent chain up to the filesystem root is checked: no component
@@ -56,11 +59,17 @@ final class FileStore implements StoreInterface
             }
         }
 
-        // Canonicalise once: resolve any symlink in the configured path to a
-        // real path, and use only that for every state file from here on.
-        $real = realpath($this->directory);
-        if ($real === false) {
-            throw new RuntimeException("FileStore directory could not be resolved: {$this->directory}");
+        // Require the configured path to BE its own canonical form. realpath()
+        // follows symlinks, so comparing against it rejects (rather than
+        // silently follows) a symlinked directory or any symlinked parent, and
+        // also rejects relative / non-canonical paths.
+        $configured = rtrim($this->directory, DIRECTORY_SEPARATOR);
+        $real = realpath($configured);
+        if ($real === false || $real !== $configured) {
+            throw new InvalidArgumentException(
+                'FileStore directory must be an existing, absolute, canonical path with no symlinked components: '
+                . $this->directory,
+            );
         }
         $this->directory = $real;
 

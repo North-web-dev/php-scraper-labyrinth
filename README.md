@@ -248,8 +248,10 @@ Counters and flags are stored behind `NorthWebDev\Labyrinth\Store\StoreInterface
 
 > **FileStore requires an explicit, app-owned, private directory** — there is no
 > temp-directory fallback. On construction it:
-> - canonicalises the path with `realpath()` (resolving any symlink once) and
->   uses that resolved path for every state file;
+> - requires the configured path to be absolute and canonical — it is compared
+>   against its `realpath()` and construction throws if they differ, which
+>   rejects a symlinked directory (or any symlinked/`..` component) outright
+>   rather than silently following it;
 > - creates the directory mode `0700` if missing, and refuses it if it ends up
 >   group/world-accessible or not owned by the current user;
 > - walks the whole parent chain to the filesystem root and refuses any

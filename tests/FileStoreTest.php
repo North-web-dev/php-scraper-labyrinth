@@ -111,30 +111,31 @@ final class FileStoreTest extends TestCase
         new FileStore($this->dir);
     }
 
-    public function testResolvesSymlinkedConfiguredDirectory(): void
+    public function testRejectsSymlinkedConfiguredDirectory(): void
     {
-        // A symlink in the configured path is canonicalised via realpath, and
-        // state files are written into the REAL target directory, not via the
-        // link. (The store accepts it because the resolved target is secure.)
+        // A symlinked configured path must be REJECTED, not silently followed:
+        // realpath() differs from the configured path, so construction throws.
         $real = $this->dir . '-real';
         mkdir($real, 0o700, true);
         symlink($real, $this->dir);
 
         try {
-            $store = new FileStore($this->dir);
-            $store->increment('k', 5, 60);
-
-            // The state file exists in the real target directory.
-            $files = glob($real . '/lab_*.json') ?: [];
-            self::assertCount(1, $files);
-            self::assertSame(5, $store->get('k'));
+            $this->expectException(\InvalidArgumentException::class);
+            $this->expectExceptionMessageMatches('/canonical path with no symlinked components/');
+            new FileStore($this->dir);
         } finally {
-            foreach (glob($real . '/*') ?: [] as $f) {
-                @unlink($f);
-            }
             @unlink($this->dir);
             @rmdir($real);
         }
+    }
+
+    public function testRejectsRelativeOrNonCanonicalPath(): void
+    {
+        // A path with ".." segments is not canonical and must be rejected.
+        mkdir($this->dir, 0o700, true);
+
+        $this->expectException(\InvalidArgumentException::class);
+        new FileStore($this->dir . '/../' . basename($this->dir));
     }
 
     public function testRejectsGroupWorldWritableParent(): void
