@@ -31,7 +31,10 @@ final class Config
      *                                                            real browsers advance (see README — honest limit).
      * @param list<string>                    $assetExtensions    File extensions treated as static assets. Asset
      *                                                            requests are recorded (to detect "fetches HTML but
-     *                                                            never assets") and always passed through.
+     *                                                            never assets") and always passed through. MUST NOT
+     *                                                            include data formats (json/xml/csv/txt); allowing
+     *                                                            them lets a scraper append the extension to a content
+     *                                                            path and bypass scoring. Conservative by default.
      * @param list<string>                    $baitPaths          Link-only bait paths placed in the labyrinth. They
      *                                                            are served junk, never real files. Use obviously
      *                                                            tempting but harmless names.
@@ -101,9 +104,17 @@ final class Config
         'Version' => 20, // Safari marketing version
     ];
 
+    /**
+     * TRUE static assets only. Deliberately conservative: data formats
+     * (json, xml, csv, txt, …) are EXCLUDED, because treating them as assets
+     * would let a scraper append e.g. ".json" to a content path and skip
+     * scoring entirely. Extension matching is a cheap default; for stronger
+     * guarantees detect assets by a configured path prefix (e.g. "/assets/")
+     * or by your app's response content-type instead of extension.
+     */
     public const DEFAULT_ASSET_EXTENSIONS = [
-        'css', 'js', 'mjs', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg',
-        'ico', 'woff', 'woff2', 'ttf', 'otf', 'eot', 'map', 'json', 'webmanifest',
+        'css', 'js', 'mjs', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg',
+        'ico', 'woff', 'woff2', 'ttf', 'eot', 'map',
     ];
 
     /** Link-only honeypot paths. Harmless names; served junk, never real files. */

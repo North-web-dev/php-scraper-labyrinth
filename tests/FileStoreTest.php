@@ -85,4 +85,65 @@ final class FileStoreTest extends TestCase
         @rmdir($this->dir . '/a/b');
         @rmdir($this->dir . '/a');
     }
+
+    public function testCreatedDirectoryIsPrivate(): void
+    {
+        new FileStore($this->dir);
+
+        // Created mode must have no group/world permission bits.
+        clearstatcache(true, $this->dir);
+        self::assertSame(0, fileperms($this->dir) & 0o077);
+    }
+
+    public function testRejectsEmptyDirectory(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        new FileStore('');
+    }
+
+    public function testRejectsGroupWorldAccessibleDirectory(): void
+    {
+        mkdir($this->dir, 0o777, true);
+        chmod($this->dir, 0o777); // defeat umask for the test
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/group\/world accessible/');
+        new FileStore($this->dir);
+    }
+
+    public function testRejectsSymlinkedDirectory(): void
+    {
+        $real = $this->dir . '-real';
+        mkdir($real, 0o700, true);
+        symlink($real, $this->dir);
+
+        try {
+            $this->expectException(\RuntimeException::class);
+            $this->expectExceptionMessageMatches('/symlink/');
+            new FileStore($this->dir);
+        } finally {
+            @unlink($this->dir);
+            @rmdir($real);
+        }
+    }
+
+    public function testRefusesSymlinkedStateFile(): void
+    {
+        $store = new FileStore($this->dir);
+
+        // Plant a symlink where key "k" would be stored, pointing elsewhere.
+        $statePath = $this->dir . '/lab_' . hash('sha256', 'k') . '.json';
+        $target = $this->dir . '/decoy-target';
+        file_put_contents($target, 'x');
+        symlink($target, $statePath);
+
+        try {
+            $this->expectException(\RuntimeException::class);
+            $this->expectExceptionMessageMatches('/symlink/');
+            $store->increment('k', 1, 60);
+        } finally {
+            @unlink($statePath);
+            @unlink($target);
+        }
+    }
 }

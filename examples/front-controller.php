@@ -32,7 +32,11 @@ $config = new Config(
 
 // FileStore works out of the box on a single server. Use RedisStore for a
 // multi-server deployment so counters are shared.
-$store = new FileStore(sys_get_temp_dir() . '/labyrinth');
+//
+// Pass an explicit, app-owned, PRIVATE directory — never a shared/temp path.
+// FileStore creates it mode 0700 and refuses it if it is group/world-accessible
+// or not owned by this user. Keep it OUTSIDE the web root so it is never served.
+$store = new FileStore(__DIR__ . '/../var/labyrinth');
 
 $labyrinth = new Labyrinth($config, $store);
 

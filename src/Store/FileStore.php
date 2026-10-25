@@ -14,6 +14,14 @@ use RuntimeException;
  * one host increment safely. Expired entries are treated as absent and
  * rewritten lazily.
  *
+ * SECURITY: you MUST pass an explicit, app-owned, private directory — there is
+ * no temp-directory fallback, because a world-writable location (e.g. /tmp)
+ * would let any local user forge or tamper with the volume-cap counters. The
+ * directory is created mode 0700 if missing; if it already exists it must be
+ * owned by the current user and have no group/world permission bits, or
+ * construction throws. State files are refused if they are symlinks, so a
+ * planted symlink cannot redirect writes outside the store.
+ *
  * Suitable for a single server. For a multi-server deployment use
  * {@see RedisStore} so counters are shared; a per-host FileStore would let a
  * scraper get N times the quota across N app servers.
@@ -22,8 +30,57 @@ final class FileStore implements StoreInterface
 {
     public function __construct(private string $directory)
     {
-        if (!is_dir($this->directory) && !@mkdir($this->directory, 0o770, true) && !is_dir($this->directory)) {
-            throw new RuntimeException("FileStore directory is not writable: {$this->directory}");
+        if ($this->directory === '') {
+            throw new RuntimeException('FileStore requires an explicit, app-owned private directory.');
+        }
+
+        if (!file_exists($this->directory)) {
+            if (!@mkdir($this->directory, 0o700, true) && !is_dir($this->directory)) {
+                throw new RuntimeException("FileStore directory could not be created: {$this->directory}");
+            }
+        }
+
+        $this->assertSecureDirectory($this->directory);
+    }
+
+    /**
+     * Reject an unsafe store directory: a symlink, a non-directory, one with
+     * any group/world permission bit, or one not owned by the current user.
+     */
+    private function assertSecureDirectory(string $dir): void
+    {
+        clearstatcache(true, $dir);
+
+        if (is_link($dir)) {
+            throw new RuntimeException("FileStore directory must not be a symlink: {$dir}");
+        }
+        if (!is_dir($dir)) {
+            throw new RuntimeException("FileStore path is not a directory: {$dir}");
+        }
+
+        $perms = fileperms($dir);
+        if ($perms !== false && ($perms & 0o077) !== 0) {
+            throw new RuntimeException(sprintf(
+                'FileStore directory %s must not be group/world accessible (want mode 0700, got 0%o).',
+                $dir,
+                $perms & 0o777,
+            ));
+        }
+
+        if (function_exists('posix_getuid')) {
+            $owner = fileowner($dir);
+            if ($owner !== false && $owner !== posix_getuid()) {
+                throw new RuntimeException("FileStore directory must be owned by the current user: {$dir}");
+            }
+        }
+    }
+
+    /** Refuse to operate on a state file that is a symlink (tampering). */
+    private function assertNotSymlink(string $path): void
+    {
+        clearstatcache(true, $path);
+        if (is_link($path)) {
+            throw new RuntimeException("Refusing to use symlinked store file: {$path}");
         }
     }
 
@@ -50,6 +107,7 @@ final class FileStore implements StoreInterface
     public function get(string $key): int
     {
         $path = $this->path($key);
+        $this->assertNotSymlink($path);
         if (!is_file($path)) {
             return 0;
         }
@@ -99,6 +157,7 @@ final class FileStore implements StoreInterface
     private function withLock(string $key, callable $mutator): int
     {
         $path = $this->path($key);
+        $this->assertNotSymlink($path);
         $handle = @fopen($path, 'c+b');
         if ($handle === false) {
             throw new RuntimeException("Cannot open store file: {$path}");

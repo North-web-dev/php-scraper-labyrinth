@@ -223,7 +223,7 @@ All options are constructor arguments of `NorthWebDev\Labyrinth\Config`:
 | `contentPathMinDepth` | `2` | Path depth that counts as a "deep content hit". |
 | `noAssetMinContentHits` | `3` | Content pages (with zero assets) before `no_asset_requests` fires. |
 | `maxPlausibleUaVersions` | Chrome 145, Firefox 140, … | Highest believable major version per product. **Bump over time.** |
-| `assetExtensions` | css, js, images, fonts, … | Extensions treated as static assets. |
+| `assetExtensions` | css, js, images, fonts (true static only) | Extensions treated as static assets. Excludes data formats (json/xml/csv/txt) so a scraper cannot append one to bypass scoring. For stronger detection, match a path prefix or response content-type instead. |
 | `baitPaths` | `/backup`, `/.env`, … | Link-only honeypot paths (served junk). |
 | `tarpitDelaySeconds` | `2` | Stall before responding to a flagged client. See non-blocking note. |
 | `tarpitLinksPerPage` | `15` | Fake internal links per labyrinth page. |
@@ -245,6 +245,14 @@ Counters and flags are stored behind `NorthWebDev\Labyrinth\Store\StoreInterface
 | Store | Scope | Use when |
 |---|---|---|
 | `FileStore` | Single server | Default. Zero dependencies, concurrency-safe via `flock`. |
+
+> **FileStore requires an explicit, app-owned, private directory** — there is no
+> temp-directory fallback. It creates the directory mode `0700` and refuses to
+> start if the directory already exists but is group/world-accessible or not
+> owned by the current user, and it refuses any state file that is a symlink.
+> Keep the directory outside your web root. A world-writable location (e.g.
+> `/tmp`) would let a local user forge the volume-cap counters.
+
 | `ApcuStore` | Single server | You want in-memory speed and have APCu. Lost on pool restart. |
 | `RedisStore` | **Multiple servers** | Counters must be shared. A per-host store would let a scraper get N× the quota across N app servers. |
 | `InMemoryStore` | Current process only | Tests and single-request CLI use. **Not** for production caps. |

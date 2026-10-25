@@ -106,6 +106,37 @@ final class LabyrinthRoutingTest extends TestCase
         self::assertNull($lab->handle($content));
     }
 
+    public function testDataExtensionPathIsNotTreatedAsAsset(): void
+    {
+        // A scraper appends ".json" to a content path hoping to be classed as a
+        // static asset and skip scoring. Data formats are NOT assets, so the
+        // request must still be scored and trapped.
+        $lab = $this->labyrinth(new Config(), new FakeResolver());
+
+        $request = new Request('203.0.113.84', 'GET', '/article/123.json', [
+            'User-Agent' => 'Mozilla/5.0 Chrome/155.0.0.0 Safari/537.36',
+            'Accept-Language' => 'en-US,en;q=0.5',
+        ]);
+        $response = $lab->handle($request);
+
+        self::assertNotNull($response);
+        self::assertSame(200, $response->status());
+        self::assertSame('noindex, nofollow', $response->header('X-Robots-Tag'));
+    }
+
+    public function testRealStaticAssetStillPassesThrough(): void
+    {
+        $lab = $this->labyrinth(new Config(), new FakeResolver());
+
+        // Same hostile headers, but a genuine static asset path => passed through.
+        $request = new Request('203.0.113.85', 'GET', '/app.css', [
+            'User-Agent' => 'Mozilla/5.0 Chrome/155.0.0.0 Safari/537.36',
+            'Accept-Language' => 'en-US,en;q=0.5',
+        ]);
+
+        self::assertNull($lab->handle($request));
+    }
+
     public function testRateCapReturns429(): void
     {
         $lab = $this->labyrinth(new Config(rateMaxRequests: 2, rateWindowSeconds: 60), new FakeResolver());
